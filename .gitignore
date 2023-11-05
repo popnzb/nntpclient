@@ -1,0 +1,9 @@
+.idea/
+.task/
+coverage.out
+coverage.html
+*.disabled
+
+## Local resources
+cmd/test_client/
+notes.md

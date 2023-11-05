@@ -1,0 +1,9 @@
+The `sample_article.txt` file consists of the full response from a real
+world NNTP server. The conversation looks like:
+
+```
+ARTICLE <1p81j8s.l0kmdc1b6stnjN%!@!.invalid>
+/* contents of sample_article.txt */
+QUIT
+205 Bye!
+```
