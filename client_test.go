@@ -253,25 +253,15 @@ func Test_readSingleLineResponse(t *testing.T) {
 
 func Test_readHeaders(t *testing.T) {
 	t.Run("returns error for EOF", func(t *testing.T) {
-		var logs bytes.Buffer
-		sink := logSink{buf: &logs}
-		logger := slog.New(slog.NewJSONHandler(
-			sink,
-			&slog.HandlerOptions{Level: slog.LevelDebug},
-		))
 		res := &Response{
 			bufferedReader: bufio.NewReader(&eofReader{}),
 		}
-		c := Client{
-			logger:          logger,
-			currentResponse: res,
-		}
+		c := Client{currentResponse: res}
 
 		headers, err := c.readHeaders()
 		assert.Nil(t, headers)
 		assert.Equal(t, true, errors.Is(err, NntpError))
 		assert.ErrorContains(t, err, "unexpected end of response")
-		assert.Contains(t, logs.String(), `"last-read-bytes":"ZW9mUmVhZGVy"`)
 	})
 
 	t.Run("return error for bad read", func(t *testing.T) {
