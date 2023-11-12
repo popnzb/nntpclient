@@ -29,13 +29,14 @@ func (c *Client) NewNews(wildmat string, since time.Time) ([]string, error) {
 		return nil, UnexpectedError(code, message)
 	}
 
-	body, err := c.readBody()
+	var body bytes.Buffer
+	err = c.readBody(&body)
 	if err != nil {
 		return nil, err
 	}
 
 	result := make([]string, 0)
-	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner := bufio.NewScanner(bytes.NewReader(body.Bytes()))
 	for scanner.Scan() {
 		line := scanner.Text()
 		result = append(result, line)

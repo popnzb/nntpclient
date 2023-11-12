@@ -2,7 +2,9 @@ package nntpclient
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +23,10 @@ const lineTerminatorByte = 0x0a // "\n"
 // Client is a simple [NNTP](https://datatracker.ietf.org/doc/html/rfc3977)
 // client. Client instances should be created with [New], [NewTls], or
 // [NewWithPort] (this one being the most flexible).
+//
+// When reading headers or article bodies, if an [io.EOF] is encountered,
+// the most recent read bytes (headers), or all ready bytes so far (bodies),
+// will be logged at the [slog.LevelDebug] level as a Base64 encoded string.
 type Client struct {
 	host      string
 	port      int
@@ -37,7 +43,7 @@ type Client struct {
 	CanPost bool
 }
 
-type Option func(client *Client) error
+type Option func(client *Client)
 
 // New creates a new [Client] instance that connects to the given `host`
 // according to the given options. Instances created with this method will
@@ -67,9 +73,8 @@ func NewWithPort(host string, port int, opts ...Option) (*Client, error) {
 // WithDialer allows defining the dialer that will be used to establish
 // the connection with the remote server.
 func WithDialer(dialer *net.Dialer) Option {
-	return func(client *Client) error {
+	return func(client *Client) {
 		client.dialer = dialer
-		return nil
 	}
 }
 
@@ -77,18 +82,16 @@ func WithDialer(dialer *net.Dialer) Option {
 // logging messages. The default logger logs at the "info" level to the
 // stdout stream.
 func WithLogger(logger *slog.Logger) Option {
-	return func(client *Client) error {
+	return func(client *Client) {
 		client.logger = logger
-		return nil
 	}
 }
 
 // WithTlsConfig allows defining the TLS configuration to be used when
 // establishing a connection to a TLS enabled port.
 func WithTlsConfig(config *tls.Config) Option {
-	return func(client *Client) error {
+	return func(client *Client) {
 		client.tlsConfig = config
-		return nil
 	}
 }
 
@@ -105,10 +108,7 @@ func _new(host string, port int, opts ...Option) (*Client, error) {
 	}
 
 	for _, opt := range opts {
-		err := opt(client)
-		if err != nil {
-			return nil, err
-		}
+		opt(client)
 	}
 
 	client.logger = client.logger.WithGroup("nntpclient")
@@ -158,15 +158,18 @@ func (c *Client) Connect() error {
 func (c *Client) sendCommand(command string) (code int, message string, err error) {
 	_, err = fmt.Fprintf(c.conn, "%s\r\n", command)
 	if err != nil {
-		return 0, "", err
+		return -1, "", err
 	}
 
 	c.currentResponse = NewResponse(c.conn)
 
-	line := c.readSingleLineResponse()
+	line, err := c.readSingleLineResponse()
+	if err != nil {
+		return -1, "", err
+	}
 	code, err = strconv.Atoi(line[0:3])
 	if err != nil {
-		return 0, "", fmt.Errorf("could not process response code: %v", err)
+		return -1, "", fmt.Errorf("could not process response code: %v", err)
 	}
 
 	return code, strings.TrimSpace(line[3:]), nil
@@ -177,13 +180,17 @@ func (c *Client) sendCommand(command string) (code int, message string, err erro
 // after the code in the initial response is arbitrarily set by the
 // server. This arbitrary string will be returned for completeness’s sake.
 func (c *Client) readInitialResponse() (int, string, error) {
-	line := c.readSingleLineResponse()
+	line, err := c.readSingleLineResponse()
+	if err != nil {
+		return -1, "", err
+	}
+
 	code := cast.ToInt(line[0:3])
 	message := strings.TrimSpace(line[4:])
 
 	if code != 200 && code != 201 {
 		defer c.conn.Close()
-		err := fmt.Errorf("connecton failure (code %d): %s", code, message)
+		err := fmt.Errorf("connection failure (code %d): %s", code, message)
 		return code, message, err
 	}
 
@@ -195,9 +202,12 @@ func (c *Client) readInitialResponse() (int, string, error) {
 // for information about standard single line responses.
 //
 // The unprocessed line will be returned.
-func (c *Client) readSingleLineResponse() string {
-	readBytes, _ := c.currentResponse.ReadBytes(lineTerminatorByte)
-	return string(readBytes)
+func (c *Client) readSingleLineResponse() (string, error) {
+	readBytes, err := c.currentResponse.ReadBytes(lineTerminatorByte)
+	if err != nil {
+		return "", err
+	}
+	return string(readBytes), nil
 }
 
 // readHeaders is used to read a headers, or headers-like, block after issuing
@@ -217,7 +227,11 @@ func (c *Client) readHeaders() (textproto.MIMEHeader, error) {
 		readBytes, err := res.ReadBytes(lineTerminatorByte)
 		if err != nil {
 			if err == io.EOF {
-				break
+				if c.logger.Enabled(context.TODO(), slog.LevelDebug) {
+					b64 := base64.StdEncoding.EncodeToString(readBytes)
+					c.logger.Debug("unexpected end-of-file", "last-read-bytes", b64)
+				}
+				return nil, ErrUnexpectedEOF
 			}
 			return nil, err
 		}
@@ -253,29 +267,28 @@ func (c *Client) readHeaders() (textproto.MIMEHeader, error) {
 }
 
 // readBody is used to read a body, or body-like, block from a response after
-// issuing a command. The body is NOT processed. It is instead returned as
-// a slice of bytes. This allows for processing of bodies according to their
-// content by a client.
-func (c *Client) readBody() ([]byte, error) {
-	var result bytes.Buffer
-
+// issuing a command. The body is NOT processed. It is instead written to the
+// passed in [io.Writer]. This allows for processing of bodies according to
+// their content by a client.
+func (c *Client) readBody(writer io.Writer) error {
 	res := c.currentResponse
 	endOfBody := []byte(".\r\n")
 	for {
 		readBytes, err := res.ReadBytes(lineTerminatorByte)
 		if err != nil {
 			if err == io.EOF {
-				break
+				writer.Write(readBytes)
+				return ErrUnexpectedEOF
 			}
-			return nil, err
+			return err
 		}
 
 		if bytes.Equal(readBytes, endOfBody) {
 			break
 		}
 
-		result.Write(readBytes)
+		writer.Write(readBytes)
 	}
 
-	return result.Bytes(), nil
+	return nil
 }

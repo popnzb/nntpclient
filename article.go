@@ -1,9 +1,20 @@
 package nntpclient
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/textproto"
 )
+
+// ArticleAsBytes is a wrapper for [Article] that reads the whole article
+// into a buffer before returning the headers and the body of the article as
+// a slice of bytes.
+func (c *Client) ArticleAsBytes(id string) (textproto.MIMEHeader, []byte, error) {
+	var body bytes.Buffer
+	headers, err := c.Article(id, &body)
+	return headers, body.Bytes(), err
+}
 
 // Article gets an article from the server. The id parameter may be any of:
 //
@@ -12,13 +23,14 @@ import (
 // 3. global id -- the global id for an article with brackets, e.g. `<foo.bar>`
 //
 // Note, when using the global id it is not necessary to select a group first.
-// But when using a internal group id, or the empty string, a group must be
+// But when using an internal group id, or the empty string, a group must be
 // selected prior to invoking this function.
 //
-// The result is a set of article headers and the bytes representing the article
-// body. If an error occurs at any point while processing the article, only
-// the error will be returned.
-func (c *Client) Article(id string) (textproto.MIMEHeader, []byte, error) {
+// After reading the body of the article into the given writer, the headers
+// will be returned if an error did not occur. If an error does occur, whatever
+// part of the article body was read, if any, will have been written to the
+// writer, nil will be returned for the headers, and the error will be returned.
+func (c *Client) Article(id string, writer io.Writer) (textproto.MIMEHeader, error) {
 	var cmd string
 	if id == "" {
 		cmd = "ARTICLE"
@@ -28,34 +40,33 @@ func (c *Client) Article(id string) (textproto.MIMEHeader, []byte, error) {
 
 	code, message, err := c.sendCommand(cmd)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	switch code {
 	case 412:
-		return nil, nil, ErrNoGroupSelected
+		return nil, ErrNoGroupSelected
 	case 420:
-		return nil, nil, ErrCurrentArticleNumInvalid
+		return nil, ErrCurrentArticleNumInvalid
 	case 423:
-		return nil, nil, ErrNoArticleWithNum
+		return nil, ErrNoArticleWithNum
 	case 430:
-		return nil, nil, ErrNoArticleWithId
+		return nil, ErrNoArticleWithId
 	}
 
 	if code != 220 {
-		return nil, nil, UnexpectedError(code, message)
+		return nil, UnexpectedError(code, message)
 	}
-	c.logger.Debug("article", "message", message)
 
 	headers, err := c.readHeaders()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	body, err := c.readBody()
+	err = c.readBody(writer)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return headers, body, nil
+	return headers, nil
 }

@@ -24,13 +24,14 @@ func (c *Client) Capabilities() (*Capabilities, error) {
 		return nil, UnexpectedError(code, message)
 	}
 
-	bodyBytes, err := c.readBody()
+	var body bytes.Buffer
+	err = c.readBody(&body)
 	if err != nil {
 		return nil, err
 	}
 
 	capabilities := make(Capabilities)
-	scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
+	scanner := bufio.NewScanner(bytes.NewReader(body.Bytes()))
 	for scanner.Scan() {
 		scanLine := scanner.Text()
 		parts := strings.Fields(scanLine)

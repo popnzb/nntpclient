@@ -35,7 +35,7 @@ type ListDistribPattern struct {
 	Value   string
 }
 
-// ListNewsgroup represents a newgroup information line from a
+// ListNewsgroup represents a newsgroup information line from a
 // `list newsgroups` directive. See RFC 3977 §7.6.6.
 type ListNewsgroup struct {
 	Name        string
@@ -51,7 +51,10 @@ func (c *Client) listCmd(cmd string) ([]byte, error) {
 		return nil, UnexpectedError(code, message)
 	}
 
-	return c.readBody()
+	var body bytes.Buffer
+	err = c.readBody(&body)
+
+	return body.Bytes(), err
 }
 
 func bodyToListGroup(body []byte) map[string]ListGroup {
@@ -112,7 +115,7 @@ func (c *Client) ListActiveTimes(wildmat string) (map[string]ListGroupTimes, err
 		parts := strings.Fields(line)
 		result[parts[0]] = ListGroupTimes{
 			Name:    parts[0],
-			Created: time.Unix(cast.ToInt64(parts[1]), 0),
+			Created: time.Unix(cast.ToInt64(parts[1]), 0).UTC(),
 			Creator: parts[2],
 		}
 	}

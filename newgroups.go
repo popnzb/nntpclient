@@ -1,6 +1,7 @@
 package nntpclient
 
 import (
+	"bytes"
 	"time"
 )
 
@@ -23,11 +24,12 @@ func (c *Client) NewGroups(since time.Time) (map[string]ListGroup, error) {
 		return nil, UnexpectedError(code, message)
 	}
 
-	body, err := c.readBody()
+	var body bytes.Buffer
+	err = c.readBody(&body)
 	if err != nil {
 		return nil, err
 	}
 
-	result := bodyToListGroup(body)
+	result := bodyToListGroup(body.Bytes())
 	return result, nil
 }

@@ -1,5 +1,9 @@
 package nntpclient
 
+import (
+	"bytes"
+)
+
 // Help retrieves the server help page for the support capabilities.
 func (c *Client) Help() (string, error) {
 	code, message, err := c.sendCommand("HELP")
@@ -10,10 +14,11 @@ func (c *Client) Help() (string, error) {
 		return "", UnexpectedError(code, message)
 	}
 
-	body, err := c.readBody()
+	var body bytes.Buffer
+	err = c.readBody(&body)
 	if err != nil {
 		return "", err
 	}
 
-	return string(body), nil
+	return body.String(), nil
 }

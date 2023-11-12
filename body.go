@@ -1,12 +1,24 @@
 package nntpclient
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 )
 
-// Body is used to retrieve only the body of an article. The id parameter
-// is handled in the same way as it is by [Article].
-func (c *Client) Body(id string) ([]byte, error) {
+// BodyAsBytes is used to retrieve only the body of an article as a slice of
+// bytes. The full body is read into the slice before it is returned. The id
+// parameter is handled in the same way as it is by [Article].
+func (c *Client) BodyAsBytes(id string) ([]byte, error) {
+	var body bytes.Buffer
+	err := c.Body(id, &body)
+	return body.Bytes(), err
+}
+
+// Body is used to retrieve only the body of an article. As the article is
+// read from the connection it is written to writer. The id parameter is
+// handled in the same way as it is by [Article].
+func (c *Client) Body(id string, writer io.Writer) error {
 	var cmd string
 	if id == "" {
 		cmd = "BODY"
@@ -16,23 +28,24 @@ func (c *Client) Body(id string) ([]byte, error) {
 
 	code, message, err := c.sendCommand(cmd)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	switch code {
 	case 412:
-		return nil, ErrNoGroupSelected
+		return ErrNoGroupSelected
 	case 420:
-		return nil, ErrCurrentArticleNumInvalid
+		return ErrCurrentArticleNumInvalid
 	case 423:
-		return nil, ErrNoArticleWithNum
+		return ErrNoArticleWithNum
 	case 430:
-		return nil, ErrNoArticleWithId
+		return ErrNoArticleWithId
 	}
 
 	if code != 222 {
-		return nil, UnexpectedError(code, message)
+		return UnexpectedError(code, message)
 	}
 
-	return c.readBody()
+	err = c.readBody(writer)
+	return err
 }

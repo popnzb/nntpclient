@@ -75,11 +75,12 @@ func (c *Client) ListGroup(name string) (*GroupList, error) {
 		ArticleNumbers: make([]int, 0),
 	}
 
-	body, err := c.readBody()
+	var body bytes.Buffer
+	err = c.readBody(&body)
 	if err != nil {
 		return nil, err
 	}
-	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner := bufio.NewScanner(bytes.NewReader(body.Bytes()))
 	for scanner.Scan() {
 		articleId := scanner.Text()
 		result.ArticleNumbers = append(result.ArticleNumbers, cast.ToInt(articleId))
